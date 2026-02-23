@@ -48,6 +48,7 @@ def postback():
     adset    = request.args.get("adset", "")
     ad       = request.args.get("ad", "")
     goal     = request.args.get("goal", "")
+    country  = request.args.get("country", "—")
 
     logging.info(f"Постбэк: campaign={campaign}, adset={adset}, ad={ad}, goal={goal}")
 
@@ -66,7 +67,8 @@ def postback():
             f"🟢 Новый подписчик! #{count}\n\n"
             f"Campaign: {campaign}\n"
             f"Ad Set: {adset}\n"
-            f"Ad: {ad}\n\n"
+            f"Ad: {ad}\n"
+            f"🌍 Страна: {country}\n\n"
             f"👤 {name}"
         )
         asyncio.run(bot.send_message(chat_id=buyer["telegram_id"], text=message))
