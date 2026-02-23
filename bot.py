@@ -1,8 +1,7 @@
 import os
 import logging
+import requests
 from flask import Flask, request
-from telegram import Bot
-import asyncio
 
 # ─── КОНФИГ ───────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8723765613:AAEq1rf8RdTYOSQtL54LKuNT70zmAwPe-Es")
@@ -23,10 +22,15 @@ BUYERS = [
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
-bot = Bot(token=BOT_TOKEN)
 
 # Счётчик подписчиков на байера (сбрасывается при перезапуске)
 counters = {}
+
+
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    resp = requests.post(url, json={"chat_id": chat_id, "text": text})
+    logging.info(f"Telegram ответ: {resp.status_code} {resp.text}")
 
 
 def find_buyer(campaign_name: str):
@@ -71,7 +75,7 @@ def postback():
             f"🌍 Страна: {country}\n\n"
             f"👤 {name}"
         )
-        asyncio.run(bot.send_message(chat_id=buyer["telegram_id"], text=message))
+        send_message(buyer["telegram_id"], message)
         logging.info(f"Отправлено {name}, счётчик: {count}")
     else:
         logging.warning(f"Байер не найден: {campaign}")
