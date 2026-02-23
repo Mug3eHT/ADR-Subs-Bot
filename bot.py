@@ -3,7 +3,6 @@ import logging
 from flask import Flask, request
 from telegram import Bot
 import asyncio
-from datetime import datetime
 
 # ─── КОНФИГ ───────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8723765613:AAEq1rf8RdTYOSQtL54LKuNT70zmAwPe-Es")
@@ -11,12 +10,12 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8723765613:AAEq1rf8RdTYOSQtL54LKuNT70zm
 BUYERS = [
     {
         "keyword": "ivan",
-        "telegram_id": 8434373492,  # Telegram ID Ивана
+        "telegram_id": 8434373492,
         "name": "Ivan"
     },
     {
         "keyword": "kamil",
-        "telegram_id": 7074480840,  # Telegram ID Камиля
+        "telegram_id": 7074480840,
         "name": "Kamil"
     },
 ]
@@ -26,9 +25,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 
+# Счётчик подписчиков на байера (сбрасывается при перезапуске)
+counters = {}
+
 
 def find_buyer(campaign_name: str):
-    """Найти байера по ключевому слову в названии кампании"""
     if not campaign_name:
         return None
     campaign_lower = campaign_name.lower()
@@ -38,29 +39,40 @@ def find_buyer(campaign_name: str):
     return None
 
 
+GOAL_ID = "828"  # Только цель "Подписчик"
+
+
 @app.route("/postback", methods=["GET", "POST"])
 def postback():
     campaign = request.args.get("campaign", "")
-    status = request.args.get("status", "")
-    adset = request.args.get("adset", "")
-    
-    logging.info(f"Постбэк получен: campaign={campaign}, status={status}")
+    adset    = request.args.get("adset", "")
+    ad       = request.args.get("ad", "")
+    goal     = request.args.get("goal", "")
+
+    logging.info(f"Постбэк: campaign={campaign}, adset={adset}, ad={ad}, goal={goal}")
+
+    if goal != GOAL_ID:
+        logging.info(f"Пропускаем — goal={goal}, нужен {GOAL_ID}")
+        return "SKIP", 200
 
     buyer = find_buyer(campaign)
 
     if buyer:
-        now = datetime.now().strftime("%d.%m.%Y %H:%M")
+        name = buyer["name"]
+        counters[name] = counters.get(name, 0) + 1
+        count = counters[name]
+
         message = (
-            f"🟢 Новый подписчик!\n\n"
-            f"👤 Байер: {buyer['name']}\n"
-            f"📢 Кампания: {campaign}\n"
-            f"📊 Статус: {status}\n"
-            f"🕐 Время: {now}"
+            f"🟢 Новый подписчик! #{count}\n\n"
+            f"Campaign: {campaign}\n"
+            f"Ad Set: {adset}\n"
+            f"Ad: {ad}\n\n"
+            f"👤 {name}"
         )
         asyncio.run(bot.send_message(chat_id=buyer["telegram_id"], text=message))
-        logging.info(f"Уведомление отправлено байеру {buyer['name']}")
+        logging.info(f"Отправлено {name}, счётчик: {count}")
     else:
-        logging.warning(f"Байер не найден для кампании: {campaign}")
+        logging.warning(f"Байер не найден: {campaign}")
 
     return "OK", 200
 
