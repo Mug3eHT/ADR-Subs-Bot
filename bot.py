@@ -25,6 +25,8 @@ logging.basicConfig(level=logging.INFO)
 
 # Счётчик подписчиков на байера (сбрасывается при перезапуске)
 counters = {}
+# Счётчик подписчиков на креатив
+ad_counters = {}
 
 
 def send_message(chat_id, text):
@@ -67,11 +69,15 @@ def postback():
         counters[name] = counters.get(name, 0) + 1
         count = counters[name]
 
+        ad_key = f"{name}:{ad}"
+        ad_counters[ad_key] = ad_counters.get(ad_key, 0) + 1
+        ad_count = ad_counters[ad_key]
+
         message = (
             f"🟢 Новый подписчик! #{count}\n\n"
             f"Campaign: {campaign}\n"
             f"Ad Set: {adset}\n"
-            f"Ad: {ad}\n"
+            f"Ad: {ad} (+{ad_count})\n"
             f"🌍 Страна: {country}\n\n"
             f"👤 {name}"
         )
