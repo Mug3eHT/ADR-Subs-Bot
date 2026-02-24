@@ -153,9 +153,18 @@ def telegram_webhook():
         return "OK", 200
 
     if text == "/start":
-        send_message(chat_id, "Привет! Напиши /stats чтобы увидеть свою статистику.")
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, json={
+            "chat_id": chat_id,
+            "text": "Привет! Нажми кнопку ниже чтобы увидеть свою статистику.",
+            "reply_markup": {
+                "keyboard": [[{"text": "📊 Stats"}]],
+                "resize_keyboard": True,
+                "persistent": True
+            }
+        })
 
-    elif text == "/stats":
+    elif text in ("/stats", "📊 Stats"):
         buyer = find_buyer_by_chat_id(chat_id)
         if buyer:
             send_message(chat_id, get_stats_message(buyer["name"]))
