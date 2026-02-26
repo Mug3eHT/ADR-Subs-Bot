@@ -101,6 +101,7 @@ def postback():
     ad       = request.args.get("ad", "")
     goal     = request.args.get("goal", "")
     country  = request.args.get("country", "—")
+    offer    = request.args.get("offer", "—")
 
     logging.info(f"Постбэк: campaign={campaign}, goal={goal}")
 
@@ -124,6 +125,7 @@ def postback():
 
         message = (
             f"🟢 Новый подписчик! #{count}\n\n"
+            f"Offer: {offer}\n"
             f"Campaign: {campaign}\n"
             f"Ad Set: {adset}\n"
             f"Ad: {ad} (+{ad_count})\n"
