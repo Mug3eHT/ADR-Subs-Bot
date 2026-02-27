@@ -1,12 +1,13 @@
 import os
 import logging
 import requests
+import psycopg2
 from flask import Flask, request
-from datetime import datetime, date
-from collections import defaultdict
+from datetime import date, timedelta
 
 # ─── КОНФИГ ───────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8723765613:AAEq1rf8RdTYOSQtL54LKuNT70zmAwPe-Es")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 BUYERS = [
     {
@@ -21,27 +22,106 @@ BUYERS = [
     },
 ]
 
-GOAL_SUBSCRIBER = "828"  # Подписчик
-GOAL_LEAD       = "826"  # Лид
+GOAL_SUBSCRIBER = "828"
+GOAL_LEAD       = "826"
 # ──────────────────────────────────────────────────────────
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Счётчики подписчиков на байера (общий)
-counters = {}
-# Счётчик на креатив
-ad_counters = {}
-# Статистика по дням: stats[name][date_str][goal_type] = count
-stats = defaultdict(lambda: defaultdict(lambda: {"subscribers": 0, "leads": 0}))
+
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
+
+
+def init_db():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS counters (
+                    name TEXT PRIMARY KEY,
+                    total INTEGER DEFAULT 0
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ad_counters (
+                    key TEXT PRIMARY KEY,
+                    count INTEGER DEFAULT 0
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS daily_stats (
+                    name TEXT,
+                    day TEXT,
+                    subscribers INTEGER DEFAULT 0,
+                    leads INTEGER DEFAULT 0,
+                    PRIMARY KEY (name, day)
+                )
+            """)
+        conn.commit()
+
+
+init_db()
 
 
 def today_str():
     return date.today().isoformat()
 
+
 def yesterday_str():
-    from datetime import timedelta
     return (date.today() - timedelta(days=1)).isoformat()
+
+
+def increment_counter(name):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO counters (name, total) VALUES (%s, 1)
+                ON CONFLICT (name) DO UPDATE SET total = counters.total + 1
+                RETURNING total
+            """, (name,))
+            result = cur.fetchone()[0]
+        conn.commit()
+    return result
+
+
+def increment_ad_counter(key):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO ad_counters (key, count) VALUES (%s, 1)
+                ON CONFLICT (key) DO UPDATE SET count = ad_counters.count + 1
+                RETURNING count
+            """, (key,))
+            result = cur.fetchone()[0]
+        conn.commit()
+    return result
+
+
+def increment_daily(name, day, field):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                INSERT INTO daily_stats (name, day, {field}) VALUES (%s, %s, 1)
+                ON CONFLICT (name, day) DO UPDATE SET {field} = daily_stats.{field} + 1
+            """, (name, day))
+        conn.commit()
+
+
+def get_daily(name, day):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT subscribers, leads FROM daily_stats WHERE name=%s AND day=%s", (name, day))
+            row = cur.fetchone()
+    return row if row else (0, 0)
+
+
+def get_total(name):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(SUM(subscribers),0), COALESCE(SUM(leads),0) FROM daily_stats WHERE name=%s", (name,))
+            row = cur.fetchone()
+    return row if row else (0, 0)
 
 
 def send_message(chat_id, text):
@@ -68,17 +148,12 @@ def find_buyer_by_chat_id(chat_id):
 
 
 def get_stats_message(name):
-    today = today_str()
+    today     = today_str()
     yesterday = yesterday_str()
 
-    today_subs  = stats[name][today]["subscribers"]
-    today_leads = stats[name][today]["leads"]
-
-    yest_subs   = stats[name][yesterday]["subscribers"]
-    yest_leads  = stats[name][yesterday]["leads"]
-
-    all_subs  = sum(v["subscribers"] for v in stats[name].values())
-    all_leads = sum(v["leads"] for v in stats[name].values())
+    today_subs, today_leads   = get_daily(name, today)
+    yest_subs, yest_leads     = get_daily(name, yesterday)
+    all_subs, all_leads       = get_total(name)
 
     return (
         f"📊 Статистика {name}\n\n"
@@ -110,22 +185,17 @@ def postback():
         logging.warning(f"Байер не найден: {campaign}")
         return "OK", 200
 
-    name = buyer["name"]
+    name  = buyer["name"]
     today = today_str()
 
     if goal == GOAL_SUBSCRIBER:
-        counters[name] = counters.get(name, 0) + 1
-        count = counters[name]
-
-        ad_key = f"{name}:{ad}"
-        ad_counters[ad_key] = ad_counters.get(ad_key, 0) + 1
-        ad_count = ad_counters[ad_key]
-
-        stats[name][today]["subscribers"] += 1
+        count    = increment_counter(name)
+        ad_count = increment_ad_counter(f"{name}:{ad}")
+        increment_daily(name, today, "subscribers")
 
         message = (
             f"🟢 Новый подписчик! #{count}\n\n"
-            f"Offer: {offer}\n"
+            f"🎯 Offer: {offer}\n"
             f"Campaign: {campaign}\n"
             f"Ad Set: {adset}\n"
             f"Ad: {ad} (+{ad_count})\n"
@@ -135,8 +205,7 @@ def postback():
         send_message(buyer["telegram_id"], message)
 
     elif goal == GOAL_LEAD:
-        stats[name][today]["leads"] += 1
-        # Лиды не шлём как отдельное уведомление — только в /stats
+        increment_daily(name, today, "leads")
 
     return "OK", 200
 
