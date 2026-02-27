@@ -16,9 +16,9 @@ BUYERS = [
         "name": "Ivan"
     },
     {
-        "keyword": "kamil",
-        "telegram_id": 7074480840,
-        "name": "Kamil"
+        "keyword": "rchq",
+        "telegram_id": 8378230283,
+        "name": "rchq"
     },
 ]
 
