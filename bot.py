@@ -1,13 +1,12 @@
 import os
 import logging
 import requests
-import pg8000.native
+import json
 from flask import Flask, request
 from datetime import date, timedelta
 
 # ─── КОНФИГ ───────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8723765613:AAEq1rf8RdTYOSQtL54LKuNT70zmAwPe-Es")
-DATABASE_URL = os.environ.get("DATABASE_URL")
 
 BUYERS = [
     {
@@ -24,52 +23,29 @@ BUYERS = [
 
 GOAL_SUBSCRIBER = "828"
 GOAL_LEAD       = "826"
+DATA_FILE       = "data.json"
 # ──────────────────────────────────────────────────────────
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-def get_conn():
-    import urllib.parse
-    r = urllib.parse.urlparse(DATABASE_URL)
-    return pg8000.native.Connection(
-        host=r.hostname,
-        port=r.port or 5432,
-        database=r.path.lstrip("/"),
-        user=r.username,
-        password=r.password,
-        ssl_context=True
-    )
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return {"counters": {}, "ad_counters": {}, "stats": {}}
 
 
-def init_db():
-    conn = get_conn()
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS counters (
-            name TEXT PRIMARY KEY,
-            total INTEGER DEFAULT 0
-        )
-    """)
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS ad_counters (
-            key TEXT PRIMARY KEY,
-            count INTEGER DEFAULT 0
-        )
-    """)
-    conn.run("""
-        CREATE TABLE IF NOT EXISTS daily_stats (
-            name TEXT,
-            day TEXT,
-            subscribers INTEGER DEFAULT 0,
-            leads INTEGER DEFAULT 0,
-            PRIMARY KEY (name, day)
-        )
-    """)
-    conn.close()
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump({"counters": counters, "ad_counters": ad_counters, "stats": stats}, f)
 
 
-init_db()
+_data       = load_data()
+counters    = _data["counters"]
+ad_counters = _data["ad_counters"]
+stats       = _data["stats"]
 
 
 def today_str():
@@ -80,55 +56,11 @@ def yesterday_str():
     return (date.today() - timedelta(days=1)).isoformat()
 
 
-def increment_counter(name):
-    conn = get_conn()
-    conn.run("""
-        INSERT INTO counters (name, total) VALUES (:name, 1)
-        ON CONFLICT (name) DO UPDATE SET total = counters.total + 1
-    """, name=name)
-    rows = conn.run("SELECT total FROM counters WHERE name = :name", name=name)
-    conn.close()
-    return rows[0][0]
-
-
-def increment_ad_counter(key):
-    conn = get_conn()
-    conn.run("""
-        INSERT INTO ad_counters (key, count) VALUES (:key, 1)
-        ON CONFLICT (key) DO UPDATE SET count = ad_counters.count + 1
-    """, key=key)
-    rows = conn.run("SELECT count FROM ad_counters WHERE key = :key", key=key)
-    conn.close()
-    return rows[0][0]
-
-
-def increment_daily(name, day, field):
-    conn = get_conn()
-    if field == "subscribers":
-        conn.run("""
-            INSERT INTO daily_stats (name, day, subscribers) VALUES (:name, :day, 1)
-            ON CONFLICT (name, day) DO UPDATE SET subscribers = daily_stats.subscribers + 1
-        """, name=name, day=day)
-    else:
-        conn.run("""
-            INSERT INTO daily_stats (name, day, leads) VALUES (:name, :day, 1)
-            ON CONFLICT (name, day) DO UPDATE SET leads = daily_stats.leads + 1
-        """, name=name, day=day)
-    conn.close()
-
-
-def get_daily(name, day):
-    conn = get_conn()
-    rows = conn.run("SELECT subscribers, leads FROM daily_stats WHERE name=:name AND day=:day", name=name, day=day)
-    conn.close()
-    return rows[0] if rows else (0, 0)
-
-
-def get_total(name):
-    conn = get_conn()
-    rows = conn.run("SELECT COALESCE(SUM(subscribers),0), COALESCE(SUM(leads),0) FROM daily_stats WHERE name=:name", name=name)
-    conn.close()
-    return rows[0] if rows else (0, 0)
+def ensure_stats(name, day):
+    if name not in stats:
+        stats[name] = {}
+    if day not in stats[name]:
+        stats[name][day] = {"subscribers": 0, "leads": 0}
 
 
 def send_message(chat_id, text):
@@ -158,9 +90,12 @@ def get_stats_message(name):
     today     = today_str()
     yesterday = yesterday_str()
 
-    today_subs, today_leads = get_daily(name, today)
-    yest_subs, yest_leads   = get_daily(name, yesterday)
-    all_subs, all_leads     = get_total(name)
+    today_subs  = stats.get(name, {}).get(today, {}).get("subscribers", 0)
+    today_leads = stats.get(name, {}).get(today, {}).get("leads", 0)
+    yest_subs   = stats.get(name, {}).get(yesterday, {}).get("subscribers", 0)
+    yest_leads  = stats.get(name, {}).get(yesterday, {}).get("leads", 0)
+    all_subs    = sum(v.get("subscribers", 0) for v in stats.get(name, {}).values())
+    all_leads   = sum(v.get("leads", 0) for v in stats.get(name, {}).values())
 
     return (
         f"📊 Статистика {name}\n\n"
@@ -194,11 +129,18 @@ def postback():
 
     name  = buyer["name"]
     today = today_str()
+    ensure_stats(name, today)
 
     if goal == GOAL_SUBSCRIBER:
-        count    = increment_counter(name)
-        ad_count = increment_ad_counter(f"{name}:{ad}")
-        increment_daily(name, today, "subscribers")
+        counters[name] = counters.get(name, 0) + 1
+        count = counters[name]
+
+        ad_key = f"{name}:{ad}"
+        ad_counters[ad_key] = ad_counters.get(ad_key, 0) + 1
+        ad_count = ad_counters[ad_key]
+
+        stats[name][today]["subscribers"] += 1
+        save_data()
 
         message = (
             f"🟢 Новый подписчик! #{count}\n\n"
@@ -212,7 +154,8 @@ def postback():
         send_message(buyer["telegram_id"], message)
 
     elif goal == GOAL_LEAD:
-        increment_daily(name, today, "leads")
+        stats[name][today]["leads"] += 1
+        save_data()
 
     return "OK", 200
 
