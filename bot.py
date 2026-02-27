@@ -1,7 +1,7 @@
 import os
 import logging
 import requests
-import psycopg2
+import pg8000.native
 from flask import Flask, request
 from datetime import date, timedelta
 
@@ -31,34 +31,42 @@ logging.basicConfig(level=logging.INFO)
 
 
 def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+    import urllib.parse
+    r = urllib.parse.urlparse(DATABASE_URL)
+    return pg8000.native.Connection(
+        host=r.hostname,
+        port=r.port or 5432,
+        database=r.path.lstrip("/"),
+        user=r.username,
+        password=r.password,
+        ssl_context=True
+    )
 
 
 def init_db():
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS counters (
-                    name TEXT PRIMARY KEY,
-                    total INTEGER DEFAULT 0
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS ad_counters (
-                    key TEXT PRIMARY KEY,
-                    count INTEGER DEFAULT 0
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS daily_stats (
-                    name TEXT,
-                    day TEXT,
-                    subscribers INTEGER DEFAULT 0,
-                    leads INTEGER DEFAULT 0,
-                    PRIMARY KEY (name, day)
-                )
-            """)
-        conn.commit()
+    conn = get_conn()
+    conn.run("""
+        CREATE TABLE IF NOT EXISTS counters (
+            name TEXT PRIMARY KEY,
+            total INTEGER DEFAULT 0
+        )
+    """)
+    conn.run("""
+        CREATE TABLE IF NOT EXISTS ad_counters (
+            key TEXT PRIMARY KEY,
+            count INTEGER DEFAULT 0
+        )
+    """)
+    conn.run("""
+        CREATE TABLE IF NOT EXISTS daily_stats (
+            name TEXT,
+            day TEXT,
+            subscribers INTEGER DEFAULT 0,
+            leads INTEGER DEFAULT 0,
+            PRIMARY KEY (name, day)
+        )
+    """)
+    conn.close()
 
 
 init_db()
@@ -73,55 +81,54 @@ def yesterday_str():
 
 
 def increment_counter(name):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO counters (name, total) VALUES (%s, 1)
-                ON CONFLICT (name) DO UPDATE SET total = counters.total + 1
-                RETURNING total
-            """, (name,))
-            result = cur.fetchone()[0]
-        conn.commit()
-    return result
+    conn = get_conn()
+    conn.run("""
+        INSERT INTO counters (name, total) VALUES (:name, 1)
+        ON CONFLICT (name) DO UPDATE SET total = counters.total + 1
+    """, name=name)
+    rows = conn.run("SELECT total FROM counters WHERE name = :name", name=name)
+    conn.close()
+    return rows[0][0]
 
 
 def increment_ad_counter(key):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO ad_counters (key, count) VALUES (%s, 1)
-                ON CONFLICT (key) DO UPDATE SET count = ad_counters.count + 1
-                RETURNING count
-            """, (key,))
-            result = cur.fetchone()[0]
-        conn.commit()
-    return result
+    conn = get_conn()
+    conn.run("""
+        INSERT INTO ad_counters (key, count) VALUES (:key, 1)
+        ON CONFLICT (key) DO UPDATE SET count = ad_counters.count + 1
+    """, key=key)
+    rows = conn.run("SELECT count FROM ad_counters WHERE key = :key", key=key)
+    conn.close()
+    return rows[0][0]
 
 
 def increment_daily(name, day, field):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                INSERT INTO daily_stats (name, day, {field}) VALUES (%s, %s, 1)
-                ON CONFLICT (name, day) DO UPDATE SET {field} = daily_stats.{field} + 1
-            """, (name, day))
-        conn.commit()
+    conn = get_conn()
+    if field == "subscribers":
+        conn.run("""
+            INSERT INTO daily_stats (name, day, subscribers) VALUES (:name, :day, 1)
+            ON CONFLICT (name, day) DO UPDATE SET subscribers = daily_stats.subscribers + 1
+        """, name=name, day=day)
+    else:
+        conn.run("""
+            INSERT INTO daily_stats (name, day, leads) VALUES (:name, :day, 1)
+            ON CONFLICT (name, day) DO UPDATE SET leads = daily_stats.leads + 1
+        """, name=name, day=day)
+    conn.close()
 
 
 def get_daily(name, day):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT subscribers, leads FROM daily_stats WHERE name=%s AND day=%s", (name, day))
-            row = cur.fetchone()
-    return row if row else (0, 0)
+    conn = get_conn()
+    rows = conn.run("SELECT subscribers, leads FROM daily_stats WHERE name=:name AND day=:day", name=name, day=day)
+    conn.close()
+    return rows[0] if rows else (0, 0)
 
 
 def get_total(name):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COALESCE(SUM(subscribers),0), COALESCE(SUM(leads),0) FROM daily_stats WHERE name=%s", (name,))
-            row = cur.fetchone()
-    return row if row else (0, 0)
+    conn = get_conn()
+    rows = conn.run("SELECT COALESCE(SUM(subscribers),0), COALESCE(SUM(leads),0) FROM daily_stats WHERE name=:name", name=name)
+    conn.close()
+    return rows[0] if rows else (0, 0)
 
 
 def send_message(chat_id, text):
@@ -151,9 +158,9 @@ def get_stats_message(name):
     today     = today_str()
     yesterday = yesterday_str()
 
-    today_subs, today_leads   = get_daily(name, today)
-    yest_subs, yest_leads     = get_daily(name, yesterday)
-    all_subs, all_leads       = get_total(name)
+    today_subs, today_leads = get_daily(name, today)
+    yest_subs, yest_leads   = get_daily(name, yesterday)
+    all_subs, all_leads     = get_total(name)
 
     return (
         f"📊 Статистика {name}\n\n"
