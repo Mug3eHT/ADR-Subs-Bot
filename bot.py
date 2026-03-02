@@ -21,7 +21,7 @@ BUYERS = [
     },
 ]
 
-GOAL_SUBSCRIBER = "828"
+GOAL_SUBSCRIBER = ["828", "1664"]
 GOAL_LEAD       = "826"
 DATA_FILE       = "data.json"
 # ──────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ def postback():
     today = today_str()
     ensure_stats(name, today)
 
-    if goal == GOAL_SUBSCRIBER:
+    if goal in GOAL_SUBSCRIBER:
         counters[name] = counters.get(name, 0) + 1
         count = counters[name]
 
