@@ -22,7 +22,7 @@ BUYERS = [
 ]
 
 GOAL_SUBSCRIBER = ["828", "1664"]
-GOAL_LEAD       = "826"
+GOAL_LEAD       = ["826", "1662"]
 DATA_FILE       = "data.json"
 # ──────────────────────────────────────────────────────────
 
@@ -153,7 +153,7 @@ def postback():
         )
         send_message(buyer["telegram_id"], message)
 
-    elif goal == GOAL_LEAD:
+    elif goal in GOAL_LEAD:
         stats[name][today]["leads"] += 1
         save_data()
 
