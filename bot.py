@@ -19,6 +19,11 @@ BUYERS = [
         "telegram_id": 8378230283,
         "name": "rchq"
     },
+    {
+        "keyword": "lucky",
+        "telegram_id": 860720792,
+        "name": "Lucky"
+    },
 ]
 
 GOAL_SUBSCRIBER = ["828", "1664"]
