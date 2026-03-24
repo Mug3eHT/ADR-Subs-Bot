@@ -9,53 +9,46 @@ from datetime import date, timedelta
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8723765613:AAEq1rf8RdTYOSQtL54LKuNT70zmAwPe-Es")
 
 BUYERS = [
-    {
-        "keyword": "ivan",
-        "telegram_id": 8434373492,
-        "name": "Ivan"
-    },
-    {
-        "keyword": "rchq",
-        "telegram_id": 8378230283,
-        "name": "rchq"
-    },
-    {
-        "keyword": "lucky",
-        "telegram_id": 860720792,
-        "name": "Lucky"
-    },
-    {
-        "keyword": "jarvis",
-        "telegram_id": 666341258,
-        "name": "Jarvis"
-    },
+    {"keyword": "ivan",   "telegram_id": 8434373492, "name": "Ivan"},
+    {"keyword": "rchq",   "telegram_id": 8378230283, "name": "rchq"},
+    {"keyword": "lucky",  "telegram_id": 860720792,  "name": "Lucky"},
+    {"keyword": "jarvis", "telegram_id": 666341258,  "name": "Jarvis"},
 ]
 
 GOAL_SUBSCRIBER = ["828", "1664", "1895", "2011"]
 GOAL_LEAD       = ["826", "1662", "1893", "2009"]
-DATA_FILE       = "data.json"
+DATA_FILE       = "/data/data.json"
 # ──────────────────────────────────────────────────────────
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+# ─── ХРАНИЛИЩЕ ────────────────────────────────────────────
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
+    try:
+        if os.path.exists(DATA_FILE):
+            with open(DATA_FILE, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        logging.error(f"Ошибка загрузки данных: {e}")
     return {"counters": {}, "ad_counters": {}, "stats": {}}
 
 
 def save_data():
-    with open(DATA_FILE, "w") as f:
-        json.dump({"counters": counters, "ad_counters": ad_counters, "stats": stats}, f)
+    try:
+        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+        with open(DATA_FILE, "w") as f:
+            json.dump({"counters": counters, "ad_counters": ad_counters, "stats": stats}, f)
+    except Exception as e:
+        logging.error(f"Ошибка сохранения данных: {e}")
 
 
 _data       = load_data()
 counters    = _data["counters"]
 ad_counters = _data["ad_counters"]
 stats       = _data["stats"]
+# ──────────────────────────────────────────────────────────
 
 
 def today_str():
@@ -74,9 +67,12 @@ def ensure_stats(name, day):
 
 
 def send_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    resp = requests.post(url, json={"chat_id": chat_id, "text": text})
-    logging.info(f"Telegram ответ: {resp.status_code} {resp.text}")
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        resp = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
+        logging.info(f"Telegram: {resp.status_code}")
+    except Exception as e:
+        logging.error(f"Ошибка отправки: {e}")
 
 
 def find_buyer_by_campaign(campaign_name: str):
@@ -121,6 +117,7 @@ def get_stats_message(name):
     )
 
 
+# ─── ПОСТБЭК ──────────────────────────────────────────────
 @app.route("/postback", methods=["GET", "POST"])
 def postback():
     campaign = request.args.get("campaign", "")
@@ -130,11 +127,11 @@ def postback():
     country  = request.args.get("country", "—")
     offer    = request.args.get("offer", "—")
 
-    logging.info(f"Постбэк: campaign={campaign}, goal={goal}")
+    logging.info(f"Постбэк: campaign={campaign}, goal={goal}, offer={offer}")
 
     buyer = find_buyer_by_campaign(campaign)
     if not buyer:
-        logging.warning(f"Байер не найден: {campaign}")
+        logging.warning(f"Байер не найден для кампании: {campaign}")
         return "OK", 200
 
     name  = buyer["name"]
@@ -162,45 +159,57 @@ def postback():
             f"👤 {name}"
         )
         send_message(buyer["telegram_id"], message)
+        logging.info(f"✅ Подписчик #{count} отправлен {name}")
 
     elif goal in GOAL_LEAD:
         stats[name][today]["leads"] += 1
         save_data()
+        logging.info(f"✅ Лид записан для {name}")
+
+    else:
+        logging.info(f"ℹ️ Goal {goal} не отслеживается, пропускаем")
 
     return "OK", 200
 
 
+# ─── TELEGRAM WEBHOOK ─────────────────────────────────────
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
-    data = request.json
-    if not data:
-        return "OK", 200
+    try:
+        data = request.json
+        if not data:
+            return "OK", 200
 
-    message = data.get("message", {})
-    chat_id = message.get("chat", {}).get("id")
-    text    = message.get("text", "")
+        message = data.get("message", {})
+        chat_id = message.get("chat", {}).get("id")
+        text    = message.get("text", "")
 
-    if not chat_id:
-        return "OK", 200
+        if not chat_id:
+            return "OK", 200
 
-    if text == "/start":
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, json={
-            "chat_id": chat_id,
-            "text": "Привет! Нажми кнопку ниже чтобы увидеть свою статистику.",
-            "reply_markup": {
-                "keyboard": [[{"text": "📊 Stats"}]],
-                "resize_keyboard": True,
-                "persistent": True
-            }
-        })
+        logging.info(f"Telegram сообщение от {chat_id}: {text}")
 
-    elif text in ("/stats", "📊 Stats"):
-        buyer = find_buyer_by_chat_id(chat_id)
-        if buyer:
-            send_message(chat_id, get_stats_message(buyer["name"]))
-        else:
-            send_message(chat_id, "Ты не зарегистрирован в системе. Обратись к администратору.")
+        if text == "/start":
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            requests.post(url, json={
+                "chat_id": chat_id,
+                "text": "Привет! Нажми кнопку ниже чтобы увидеть свою статистику.",
+                "reply_markup": {
+                    "keyboard": [[{"text": "📊 Stats"}]],
+                    "resize_keyboard": True,
+                    "persistent": True
+                }
+            }, timeout=10)
+
+        elif text in ("/stats", "📊 Stats"):
+            buyer = find_buyer_by_chat_id(chat_id)
+            if buyer:
+                send_message(chat_id, get_stats_message(buyer["name"]))
+            else:
+                send_message(chat_id, f"Ты не зарегистрирован в системе. Твой ID: {chat_id}")
+
+    except Exception as e:
+        logging.error(f"Ошибка webhook: {e}")
 
     return "OK", 200
 
