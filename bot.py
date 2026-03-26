@@ -9,7 +9,7 @@ from datetime import date, timedelta
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8723765613:AAEq1rf8RdTYOSQtL54LKuNT70zmAwPe-Es")
 
 BUYERS = [
-    {"keyword": "ivan",   "telegram_id": 8434373492, "name": "Ivan"},
+    {"keyword": "ivan",   "telegram_id": 6599420950, "name": "Ivan"},
     {"keyword": "rchq",   "telegram_id": 8378230283, "name": "rchq"},
     {"keyword": "lucky",  "telegram_id": 860720792,  "name": "Lucky"},
     {"keyword": "jarvis", "telegram_id": 666341258,  "name": "Jarvis"},
